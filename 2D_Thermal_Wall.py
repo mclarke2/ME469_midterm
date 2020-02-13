@@ -142,7 +142,8 @@ def solve_p(ncv_x,ncv_y,nno_x,nno_y,h,dt,p,a_east,a_west,a_north,a_south,a_p,b,u
         solve_gs(ncv_x,ncv_y,h,h,p,a_east,a_west,a_north,a_south,a_p,b,25,1.0E-5)
 
     return    
-def solve_uv(ncv_x,ncv_y,nno_x,nno_y,h,dt,ubc_south,ubc_north,vbc_west,vbc_east,u,v,ut,vt,mu):
+
+def solve_uv(ncv_x,ncv_y,nno_x,nno_y,h,dt,ubc_south,ubc_north,vbc_west,vbc_east,u,v,ut,vt,mu, p):
     
     # update the temporary x-velocity field (only internal u-cells)    
     for jcv in range(ncv_y): 
@@ -190,9 +191,13 @@ def solve_uv(ncv_x,ncv_y,nno_x,nno_y,h,dt,ubc_south,ubc_north,vbc_west,vbc_east,
             
             # Diffusive part of H - second order central difference       
             F_d = (mu/(h**2))*(ucv_east+ucv_west+ucv_north+ucv_south-4.0*u[jcv,ino])
-                
-            # update the temporary velocity
-            ut[jcv,ino] = u[jcv,ino] + dt * ( -F_c+F_d )
+            
+            # Compute temperature forcing function 
+            # CODE - collocated with pressure 
+            
+            # update the temporary velocity ( we added delta p )
+            #ut[jcv,ino] = u[jcv,ino] + dt * (( p[jcv,icv]-p[jcv,icv-1])/h  -F_c+F_d ) # ADD TERM Forcing function 
+            ut[jcv,ino] = u[jcv,ino] + dt * ( -F_c+F_d ) # ADD TERM Forcing function (Original)
                 
     # update the temporary y-velocity field (only internal v-cells)    
     for jno in range (1,nno_y-1): 
@@ -242,15 +247,20 @@ def solve_uv(ncv_x,ncv_y,nno_x,nno_y,h,dt,ubc_south,ubc_north,vbc_west,vbc_east,
             vt[jno,icv] = v[jno,icv] + dt * ( -F_c+F_d )
             
     return
-                
+ 
+ 
+def solve_t(parameters):
+
+    return 
+
 def correct_uv(ncv_x,ncv_y,nno_x,nno_y,h,dt,u,v,ut,vt,p):
     # correct (and update) the velocity for the internal cells
     for jcv in range(ncv_y): 
         for ino in range(1,nno_x-1):
-            u[jcv,ino] = ut[jcv,ino] - (dt/h)*(p[jcv,ino]-p[jcv,ino-1])
+            u[jcv,ino] = ut[jcv,ino] - (dt/h)*(p[jcv,ino]-p[jcv,ino-1])   
     for jno in range (1,nno_y-1): 
         for icv in range(ncv_x):
-            v[jno,icv] = vt[jno,icv] - (dt/h)*(p[jno,icv]-p[jno-1,icv])
+            v[jno,icv] = vt[jno,icv] - (dt/h)*(p[jno,icv]-p[jno-1,icv]) 
     return
 
 def plot_uv(ncv_x,ncv_y,nno_x,nno_y,ubc_south,ubc_north,vbc_west,vbc_east,x,y,u,v):
@@ -311,7 +321,7 @@ def compute_tau(ncv_x,ncv_y,nno_x,nno_y,h,ubc_south,ubc_north,vbc_west,vbc_east,
     return tau_east
 
 # solve the Navier-Stokes Equations
-def solve(ncv,ubc_south,ubc_north,vbc_west,vbc_east,solver ,plot ,mu,deltat,timesteps):  
+def solve(ncv,ubc_south,ubc_north,vbc_west,vbc_east,solver ,plot ,mu,deltat,timesteps):  # Input temperature parameters 
     
     #assume uniform grid in x&y in the unit square [0:1]x[0:1]
     ncv_x = ncv    #input to the solver
@@ -330,7 +340,7 @@ def solve(ncv,ubc_south,ubc_north,vbc_west,vbc_east,solver ,plot ,mu,deltat,time
 
     # time step and grid size
     h=1.0/ncv_x
-    vmax = max(abs(ubc_north),abs(ubc_south),abs(vbc_west),abs(vbc_east))
+    vmax = max(abs(ubc_north),abs(ubc_south),abs(vbc_west),abs(vbc_east))  # REMOVE /CORRECT BOUNDARY CONDITIONS 
     # check stabbility limit
     dt = deltat              # defaults to 0.02
     dt = min(dt,.2*h*h/mu)   # viscous limit
@@ -378,7 +388,12 @@ def solve(ncv,ubc_south,ubc_north,vbc_west,vbc_east,solver ,plot ,mu,deltat,time
     time = 0.0
     for istep in range(timesteps):
         #update the temporary velocity field
-        solve_uv(ncv_x,ncv_y,nno_x,nno_y,h,dt,ubc_south,ubc_north,vbc_west,vbc_east,u,v,ut,vt,mu)
+        solve_uv(ncv_x,ncv_y,nno_x,nno_y,h,dt,ubc_south,ubc_north,vbc_west,vbc_east,u,v,ut,vt,mu,p)
+    
+        # solve for temperature 
+        # solve_t(paramters )
+        # CODE 
+        
         #compute the pressure field
         solve_p(ncv_x,ncv_y,nno_x,nno_y,h,dt,p,a_east,a_west,a_north,a_south,a_p,b,ut,vt,"ilu")
         #correct the velocity field
