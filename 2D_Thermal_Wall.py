@@ -7,6 +7,15 @@ from scipy.interpolate import make_interp_spline, BSpline
  
 def main():
     mu        = 0.1     # diffusion coefficient [m^2/s]
+    Tref      = 273     # reference Temperature (K)
+    Tleft     = 500     # left (hot) dirichlet boundary condition on temperature
+    Tright    = 150     # right (cold) dirichlet boundary condition on temperature
+    beta      = 0.1     # thermal expansion coefficient (check if correct)
+    gx        = 0       # gravitational acceleration in x direction
+    gy        = -9.8    # gravitational acceleration in y direction
+    Cp        = 1000    # specific heat capacity (J/kg/K), 1000 for air at stp
+    k         = 0.026   # thermal conductivity (W/m/K), 0.026 for air
+    rhoref    = 1.225   # reference density (kg/m^3), 1.225 for air at stp
     deltat    = 0.02    # time  step (stability limit checked later)
     timesteps = 30      # number of timesteps
     solver    = "ilu"
@@ -17,7 +26,7 @@ def main():
     vbc_west  = 0.0 
     vbc_east  = 0.0
     
-    solve(ncv,ubc_south,ubc_north,vbc_west,vbc_east,solver,plot ,mu,deltat,timesteps)
+    solve(ncv,ubc_south,ubc_north,vbc_west,vbc_east,solver,plot,mu,Tref,Tleft,Tright,beta,gx,gy,Cp,k,rhoref,deltat,timesteps)
     
     return
 
@@ -143,7 +152,7 @@ def solve_p(ncv_x,ncv_y,nno_x,nno_y,h,dt,p,a_east,a_west,a_north,a_south,a_p,b,u
 
     return    
 
-def solve_uv(ncv_x,ncv_y,nno_x,nno_y,h,dt,ubc_south,ubc_north,vbc_west,vbc_east,u,v,ut,vt,mu, p):
+def solve_uv(ncv_x,ncv_y,nno_x,nno_y,h,dt,ubc_south,ubc_north,vbc_west,vbc_east,u,v,ut,vt,mu,p,beta,Tref,gx,gy,T):
     
     # update the temporary x-velocity field (only internal u-cells)    
     for jcv in range(ncv_y): 
@@ -194,10 +203,11 @@ def solve_uv(ncv_x,ncv_y,nno_x,nno_y,h,dt,ubc_south,ubc_north,vbc_west,vbc_east,
             
             # Compute temperature forcing function 
             # CODE - collocated with pressure 
+            F_t = -beta*(T[jcv,icv]-Tref)*gx
             
             # update the temporary velocity ( we added delta p )
             #ut[jcv,ino] = u[jcv,ino] + dt * (( p[jcv,icv]-p[jcv,icv-1])/h  -F_c+F_d ) # ADD TERM Forcing function 
-            ut[jcv,ino] = u[jcv,ino] + dt * ( -F_c+F_d ) # ADD TERM Forcing function (Original)
+            ut[jcv,ino] = u[jcv,ino] + dt * ( -F_c+F_d+F_t ) # ADD TERM Forcing function (Original)
                 
     # update the temporary y-velocity field (only internal v-cells)    
     for jno in range (1,nno_y-1): 
@@ -243,14 +253,123 @@ def solve_uv(ncv_x,ncv_y,nno_x,nno_y,h,dt,ubc_south,ubc_north,vbc_west,vbc_east,
                     
             F_d = (mu/(h**2))*(vcv_east+vcv_west+vcv_north+vcv_south-4.0*v[jno,icv])
                 
+            # Compute temperature forcing function 
+            # CODE - collocated with pressure 
+            F_t = -beta*(T[jcv,icv]-Tref)*gy
+
             # update the temporary velocity
-            vt[jno,icv] = v[jno,icv] + dt * ( -F_c+F_d )
+            vt[jno,icv] = v[jno,icv] + dt * ( -F_c+F_d+F_t )
             
     return
  
  
-def solve_t(parameters):
+def solve_t(ncv_x,ncv_y,nno_x,nno_y,h,dt,ubc_south,ubc_north,vbc_west,vbc_east,u,v,ut,vt,k,rhoref,Cp,T,Tleft,Tright):
+    Tt = np.zeros([ncv_x,ncv_y])
+    # update the temporary x-velocity field (only internal u-cells)    
+    for jcv in range(ncv_y): 
+        for ino in range(1,nno_x-1):
+            icv = ino
+            jno = jcv
+            # compute convective fluxes
 
+            # compute x-velocity at the faces of the u-control volume &
+            # compute y-velocity at the y-faces of the u-control volume
+            uf_east  = 0.5 * (u[jcv,ino] + u[jcv,ino+1])
+            uf_west  = 0.5 * (u[jcv,ino] + u[jcv,ino-1])
+            if (jcv==0): # south boundary of the domain
+                if (icv==ncv_x-1): # south right corner boundary of the domain
+                    Tcv_east  = 2*Tright - T[jcv,icv] # extrapolating with T @ west boundary = Tl
+                    uf_south = ubc_south
+                    vf_south = 0.0  
+                    uf_north = 0.5 * (u[jcv,ino]   + u[jcv+1,ino])
+                    vf_north = 0.5 * (v[jno+1,icv] + v[jno+1,icv-1])
+                    Tf_north = 0.25 * (T[jcv,icv]+T[jcv+1,icv]+T[jcv+1,icv+1]+T[jcv,icv+1])
+                    Tf_south = 0.5 * (T[jcv,icv]+T[jcv,icv+1]) # should be a Neumann condition
+                    Tf_east  = T[jcv,icv+1]
+                    Tf_west  = T[jcv,icv]
+
+                uf_south = ubc_south
+                vf_south = 0.0  
+                uf_north = 0.5 * (u[jcv,ino]   + u[jcv+1,ino])
+                vf_north = 0.5 * (v[jno+1,icv] + v[jno+1,icv-1])
+                Tf_north = 0.25 * (T[jcv,icv]+T[jcv+1,icv]+T[jcv+1,icv+1]+T[jcv,icv+1])
+                Tf_south = 0.5 * (T[jcv,icv]+T[jcv,icv+1]) # should be a Neumann condition
+                Tf_east  = T[jcv,icv+1]
+                Tf_west  = T[jcv,icv]
+            elif (jcv==ncv_y-1): # north boundary of the domain
+                uf_south = 0.5 * (u[jcv,ino]   + u[jcv-1,ino])
+                vf_south = 0.5 * (v[jno,icv]   + v[jno,icv-1])
+                uf_north = ubc_north
+                vf_north = 0.0
+                Tf_north = 0.5 * (T[jcv,icv]+T[jcv,icv+1])
+                Tf_south = 0.25 * (T[jcv,icv]+T[jcv-1,icv]+T[jcv-1,icv+1]+T[jcv,icv+1])
+                Tf_east  = T[jcv,icv+1]
+                Tf_west  = T[jcv,icv]
+            elif (icv==0): # left boundary of the domain
+                uf_south = 0.5 * (u[jcv,ino]   + u[jcv-1,ino])
+                vf_south = 0.5 * (v[jno,icv]   + v[jno,icv-1])
+                uf_north = 0.5 * (u[jcv,ino]   + u[jcv+1,ino])
+                vf_north = 0.5 * (v[jno+1,icv] + v[jno+1,icv-1])
+                Tf_north = 0.25 * (T[jcv,icv]+T[jcv+1,icv]+T[jcv+1,icv+1]+T[jcv,icv+1])
+                Tf_south = 0.25 * (T[jcv,icv]+T[jcv-1,icv]+T[jcv-1,icv+1]+T[jcv,icv+1])
+                Tf_east = T[jcv,icv+1]
+                Tf_west = Tleft
+            elif (icv==ncv_x-1): # right boundary of the domain
+                uf_south = 0.5 * (u[jcv,ino]   + u[jcv-1,ino])
+                vf_south = 0.5 * (v[jno,icv]   + v[jno,icv-1])
+                uf_north = 0.5 * (u[jcv,ino]   + u[jcv+1,ino])
+                vf_north = 0.5 * (v[jno+1,icv] + v[jno+1,icv-1])
+                Tf_north = 0.25 * (T[jcv,icv]+T[jcv+1,icv]+T[jcv+1,icv+1]+T[jcv,icv+1])
+                Tf_south = 0.25 * (T[jcv,icv]+T[jcv-1,icv]+T[jcv-1,icv+1]+T[jcv,icv+1])
+                Tf_east = Tright
+                Tf_west = T[jcv,icv]
+            else:
+                #print "jcv,ino",jcv,ino
+                uf_south = 0.5 * (u[jcv,ino]   + u[jcv-1,ino])
+                vf_south = 0.5 * (v[jno,icv]   + v[jno,icv-1])
+                uf_north = 0.5 * (u[jcv,ino]   + u[jcv+1,ino])
+                vf_north = 0.5 * (v[jno+1,icv] + v[jno+1,icv-1])
+                Tf_north = 0.25 * (T[jcv,icv]+T[jcv+1,icv]+T[jcv+1,icv+1]+T[jcv,icv+1])
+                Tf_south = 0.25 * (T[jcv,icv]+T[jcv-1,icv]+T[jcv-1,icv+1]+T[jcv,icv+1])
+                Tf_east  = T[jcv,icv+1]
+                Tf_west  = T[jcv,icv]
+            
+            # Convective Part of H        
+            F_c = (uf_east*Tf_east-uf_west*Tf_west+vf_north*Tf_north-vf_south*Tf_south)/h
+                
+            # compute diffusive fluxes
+            if (jcv==0):  # south boundary of the domain
+                Tcv_west  = T[jcv,icv-1]
+                Tcv_east  = T[jcv,icv+1]
+                Tcv_south = T[jcv,icv] # extrapolating with T @ south boundary (adiabatic)
+                Tcv_north = T[jcv+1,icv]
+            elif (jcv==ncv_y-1): # north boundary of the domain T @ north boundary (adiabatic)
+                Tcv_west  = T[jcv,icv-1]
+                Tcv_east  = T[jcv,icv+1]
+                Tcv_south = T[jcv-1,icv]
+                Tcv_north = T[jcv,icv]
+            if (icv==0):  # west boundary of the domain
+                Tcv_west  = 2*Tleft - T[jcv,icv] # extrapolating with T @ west boundary = Tl
+                Tcv_east  = T[jcv,icv+1]
+                Tcv_south = T[jcv-1,icv]
+                Tcv_north = T[jcv+1,icv]
+            if (icv==ncv_x-1):  # east boundary of the domain
+                Tcv_west  = T[jcv,ic-1]
+                Tcv_east  = 2*Tright - T[jcv,icv] # extrapolating with T @ west boundary = Tr
+                Tcv_south = T[jcv-1,icv]
+                Tcv_north = T[jcv+1,icv]
+            else:
+                Tcv_west  = T[jcv,icv-1]
+                Tcv_east  = T[jcv,icv+1]
+                Tcv_south = T[jcv-1,icv]
+                Tcv_north = T[jcv+1,icv]
+            
+            # Diffusive part of H - second order central difference       
+            F_d = (k/rhoref/Cp/(h**2))*(Tcv_east+Tcv_west+Tcv_north+Tcv_south-4.0*T[jcv,ino])
+            
+            # update the temperature 
+            Tt[jcv,icv] = T[jcv,icv] + dt * ( -F_c+F_d )
+    T = Tt                
     return 
 
 def correct_uv(ncv_x,ncv_y,nno_x,nno_y,h,dt,u,v,ut,vt,p):
@@ -321,7 +440,7 @@ def compute_tau(ncv_x,ncv_y,nno_x,nno_y,h,ubc_south,ubc_north,vbc_west,vbc_east,
     return tau_east
 
 # solve the Navier-Stokes Equations
-def solve(ncv,ubc_south,ubc_north,vbc_west,vbc_east,solver ,plot ,mu,deltat,timesteps):  # Input temperature parameters 
+def solve(ncv,ubc_south,ubc_north,vbc_west,vbc_east,solver,plot,mu,Tref,Tleft,Tright,beta,gx,gy,Cp,k,rhoref,deltat,timesteps):  # Input temperature parameters 
     
     #assume uniform grid in x&y in the unit square [0:1]x[0:1]
     ncv_x = ncv    #input to the solver
@@ -335,6 +454,7 @@ def solve(ncv,ubc_south,ubc_north,vbc_west,vbc_east,solver ,plot ,mu,deltat,time
     u = np.zeros((ncv_y,nno_x))   # u velocity field
     v = np.zeros((nno_y,ncv_x))   # v velocity field
     p = np.zeros((ncv_y,ncv_x))   # pressure 
+    T = np.zeros((ncv_y,ncv_x))   # temperature 
     ut = np.zeros((ncv_y,nno_x))  # temporary u velocity field
     vt = np.zeros((nno_y,ncv_x))  # temporary v velocity field
 
@@ -388,11 +508,11 @@ def solve(ncv,ubc_south,ubc_north,vbc_west,vbc_east,solver ,plot ,mu,deltat,time
     time = 0.0
     for istep in range(timesteps):
         #update the temporary velocity field
-        solve_uv(ncv_x,ncv_y,nno_x,nno_y,h,dt,ubc_south,ubc_north,vbc_west,vbc_east,u,v,ut,vt,mu,p)
+        solve_uv(ncv_x,ncv_y,nno_x,nno_y,h,dt,ubc_south,ubc_north,vbc_west,vbc_east,u,v,ut,vt,mu,p,beta,Tref,gx,gy,T)
     
         # solve for temperature 
         # solve_t(paramters )
-        # CODE 
+        solve_t(ncv_x,ncv_y,nno_x,nno_y,h,dt,ubc_south,ubc_north,vbc_west,vbc_east,u,v,ut,vt,k,rhoref,Cp,T,Tleft,Tright)
         
         #compute the pressure field
         solve_p(ncv_x,ncv_y,nno_x,nno_y,h,dt,p,a_east,a_west,a_north,a_south,a_p,b,ut,vt,"ilu")
