@@ -4,25 +4,29 @@ import time, sys
 import matplotlib.pyplot as pl
 from matplotlib import cm
 from scipy.interpolate import make_interp_spline, BSpline
+import pdb
  
 def main():
-    mu        = 0.1     # diffusion coefficient [m^2/s]
+    Ra        = 10^5    # set the Rayleigh number, viscosity will be a free parameter to match it
     Tref      = 273     # reference Temperature (K)
     Tleft     = 500     # left (hot) dirichlet boundary condition on temperature
-    Tright    = 150     # right (cold) dirichlet boundary condition on temperature
+    Tright    = 100     # right (cold) dirichlet boundary condition on temperature
     beta      = 0.1     # thermal expansion coefficient (check if correct)
-    gx        = 0       # gravitational acceleration in x direction
-    gy        = -9.8    # gravitational acceleration in y direction
+    gmag      = 9.8     # gravitational acceleration magnitude
+    gx        = 0*gmag  # gravitational acceleration in x direction
+    gy        = -1*gmag # gravitational acceleration in y direction
     Cp        = 1000    # specific heat capacity (J/kg/K), 1000 for air at stp
     k         = 0.026   # thermal conductivity (W/m/K), 0.026 for air
     rhoref    = 1.225   # reference density (kg/m^3), 1.225 for air at stp
+    mu        = gmag*beta*k/Cp/rhoref*(Tleft-Tright)/Ra     # diffusion coefficient, really nu [m^2/s], assumes x = 1
+    
     deltat    = 0.02    # time  step (stability limit checked later)
     timesteps = 30      # number of timesteps
     solver    = "ilu"
     plot      = 1
-    ncv       = 16 
+    ncv       = 32  
     ubc_south = 0.0 
-    ubc_north = 1.0 
+    ubc_north = 0.000001 
     vbc_west  = 0.0 
     vbc_east  = 0.0
     
@@ -263,8 +267,8 @@ def solve_uv(ncv_x,ncv_y,nno_x,nno_y,h,dt,ubc_south,ubc_north,vbc_west,vbc_east,
     return
  
  
-def solve_t(ncv_x,ncv_y,nno_x,nno_y,h,dt,ubc_south,ubc_north,vbc_west,vbc_east,u,v,ut,vt,k,rhoref,Cp,T,Tleft,Tright):
-    Tt = np.zeros([ncv_x,ncv_y])
+def solve_t(ncv_x,ncv_y,nno_x,nno_y,h,dt,ubc_south,ubc_north,vbc_west,vbc_east,u,v,ut,vt,k,rhoref,Cp,T,Tleft,Tright,Tref):
+    Tt = np.ones([ncv_x,ncv_y])*Tref # initialize temp to Tref?
     # update the temporary x-velocity field (only internal u-cells)    
     for jcv in range(ncv_y): 
         for ino in range(1,nno_x-1):
@@ -278,32 +282,46 @@ def solve_t(ncv_x,ncv_y,nno_x,nno_y,h,dt,ubc_south,ubc_north,vbc_west,vbc_east,u
             uf_west  = 0.5 * (u[jcv,ino] + u[jcv,ino-1])
             if (jcv==0): # south boundary of the domain
                 if (icv==ncv_x-1): # south right corner boundary of the domain
-                    Tcv_east  = 2*Tright - T[jcv,icv] # extrapolating with T @ west boundary = Tl
+                    Tcv_east = 2*Tright - T[jcv,icv] # extrapolating with T @ east boundary = Tr
+                    Tcv_neast = 2*Tright - T[jcv+1,icv] # extrapolating with T @ north-east boundary = Tr
+                    Tcv_south = T[jcv,icv] # adiabatic bc on bottom wall
+                    uf_south = ubc_south
+                    vf_south = 0.0  
+                    uf_north = 0.5 * (u[jcv,ino]   + u[jcv+1,ino])
+                    vf_north = 0.5 * (v[jno+1,icv] + v[jno+1,icv-1])
+                    Tf_north = 0.25 * (T[jcv,icv]+T[jcv+1,icv]+Tcv_east+Tcv_neast)
+                    Tf_south = 0.33 * (T[jcv,icv]+Tcv_east+Tcv_south) # average of 3 cells (2 ghost) at the bottom right corner
+                    Tf_east  = Tcv_east
+                    Tf_west  = T[jcv,icv]
+                else:
+                    Tcv_south = T[jcv,icv]
+                    Tcv_seast = T[jcv,icv+1]
                     uf_south = ubc_south
                     vf_south = 0.0  
                     uf_north = 0.5 * (u[jcv,ino]   + u[jcv+1,ino])
                     vf_north = 0.5 * (v[jno+1,icv] + v[jno+1,icv-1])
                     Tf_north = 0.25 * (T[jcv,icv]+T[jcv+1,icv]+T[jcv+1,icv+1]+T[jcv,icv+1])
-                    Tf_south = 0.5 * (T[jcv,icv]+T[jcv,icv+1]) # should be a Neumann condition
+                    Tf_south = 0.25 * (T[jcv,icv]+Tcv_south+Tcv_seast+T[jcv,icv+1])
                     Tf_east  = T[jcv,icv+1]
                     Tf_west  = T[jcv,icv]
-
-                uf_south = ubc_south
-                vf_south = 0.0  
-                uf_north = 0.5 * (u[jcv,ino]   + u[jcv+1,ino])
-                vf_north = 0.5 * (v[jno+1,icv] + v[jno+1,icv-1])
-                Tf_north = 0.25 * (T[jcv,icv]+T[jcv+1,icv]+T[jcv+1,icv+1]+T[jcv,icv+1])
-                Tf_south = 0.5 * (T[jcv,icv]+T[jcv,icv+1]) # should be a Neumann condition
-                Tf_east  = T[jcv,icv+1]
-                Tf_west  = T[jcv,icv]
             elif (jcv==ncv_y-1): # north boundary of the domain
+                if (icv==ncv_x-1): # north right corner of the domain
+                    Tcv_east  = 2*Tright - T[jcv,icv] # extrapolating with T @ east boundary = Tr
+                    Tcv_seast = 2*Tright - T[jcv-1,icv] # extrapolating with T @ north-east boundary = Tr
+                    Tcv_north = T[jcv,icv] # adiabatic bc on top wall
+                    Tf_north = 0.33 * (T[jcv,icv]+Tcv_north+Tcv_east)
+                    Tf_south = 0.25 * (T[jcv,icv]+T[jcv-1,icv]+Tcv_seast+Tcv_east)
+                    Tf_east  = Tcv_east
+                else:
+                    Tcv_neast = T[jcv,icv+1] # adiabatic on top wall
+                    Tcv_north = T[jcv,icv] # adiabatic bc on top wall
+                    Tf_north = 0.25 * (T[jcv,icv]+T[jcv,icv+1]+Tcv_north+Tcv_neast)
+                    Tf_south = 0.25 * (T[jcv,icv]+T[jcv-1,icv]+T[jcv-1,icv+1]+T[jcv,icv+1])
+                    Tf_east  = T[jcv,icv+1]
                 uf_south = 0.5 * (u[jcv,ino]   + u[jcv-1,ino])
                 vf_south = 0.5 * (v[jno,icv]   + v[jno,icv-1])
                 uf_north = ubc_north
                 vf_north = 0.0
-                Tf_north = 0.5 * (T[jcv,icv]+T[jcv,icv+1])
-                Tf_south = 0.25 * (T[jcv,icv]+T[jcv-1,icv]+T[jcv-1,icv+1]+T[jcv,icv+1])
-                Tf_east  = T[jcv,icv+1]
                 Tf_west  = T[jcv,icv]
             elif (icv==0): # left boundary of the domain
                 uf_south = 0.5 * (u[jcv,ino]   + u[jcv-1,ino])
@@ -315,12 +333,15 @@ def solve_t(ncv_x,ncv_y,nno_x,nno_y,h,dt,ubc_south,ubc_north,vbc_west,vbc_east,u
                 Tf_east = T[jcv,icv+1]
                 Tf_west = Tleft
             elif (icv==ncv_x-1): # right boundary of the domain
+                Tcv_east = 2*Tright - T[jcv,icv] # extrapolating with T @ east boundary = Tr
+                Tcv_neast = 2*Tright - T[jcv+1,icv] # extrapolating with T @ north-east boundary = Tr
+                Tcv_seast = 2*Tright - T[jcv-1,icv] # extrapolating with T @ south-east boundary = Tr
                 uf_south = 0.5 * (u[jcv,ino]   + u[jcv-1,ino])
                 vf_south = 0.5 * (v[jno,icv]   + v[jno,icv-1])
                 uf_north = 0.5 * (u[jcv,ino]   + u[jcv+1,ino])
                 vf_north = 0.5 * (v[jno+1,icv] + v[jno+1,icv-1])
-                Tf_north = 0.25 * (T[jcv,icv]+T[jcv+1,icv]+T[jcv+1,icv+1]+T[jcv,icv+1])
-                Tf_south = 0.25 * (T[jcv,icv]+T[jcv-1,icv]+T[jcv-1,icv+1]+T[jcv,icv+1])
+                Tf_north = 0.25 * (T[jcv,icv]+T[jcv+1,icv]+Tcv_neast+Tcv_east)
+                Tf_south = 0.25 * (T[jcv,icv]+T[jcv-1,icv]+Tcv_seast+Tcv_east)
                 Tf_east = Tright
                 Tf_west = T[jcv,icv]
             else:
@@ -339,28 +360,35 @@ def solve_t(ncv_x,ncv_y,nno_x,nno_y,h,dt,ubc_south,ubc_north,vbc_west,vbc_east,u
                 
             # compute diffusive fluxes
             if (jcv==0):  # south boundary of the domain
+                if (icv==ncv_x-1): # south right corner boundary of the domain
+                    Tcv_east = 2*Tright - T[jcv,icv] # extrapolating with T @ east boundary = Tr
+                else:
+                    Tcv_east  = T[jcv,icv+1]
                 Tcv_west  = T[jcv,icv-1]
-                Tcv_east  = T[jcv,icv+1]
                 Tcv_south = T[jcv,icv] # extrapolating with T @ south boundary (adiabatic)
                 Tcv_north = T[jcv+1,icv]
             elif (jcv==ncv_y-1): # north boundary of the domain T @ north boundary (adiabatic)
+                if (icv==ncv_x-1): # north right corner of the domain
+                    Tcv_east = 2*Tright - T[jcv,icv] # extrapolating with T @ east boundary = Tr
+                else:
+                    Tcv_east  = T[jcv,icv+1]
                 Tcv_west  = T[jcv,icv-1]
-                Tcv_east  = T[jcv,icv+1]
                 Tcv_south = T[jcv-1,icv]
                 Tcv_north = T[jcv,icv]
-            if (icv==0):  # west boundary of the domain
+            elif (icv==0):  # west boundary of the domain
                 Tcv_west  = 2*Tleft - T[jcv,icv] # extrapolating with T @ west boundary = Tl
                 Tcv_east  = T[jcv,icv+1]
                 Tcv_south = T[jcv-1,icv]
                 Tcv_north = T[jcv+1,icv]
-            if (icv==ncv_x-1):  # east boundary of the domain
-                Tcv_west  = T[jcv,ic-1]
+            elif (icv==ncv_x-1):  # east boundary of the domain
+                Tcv_west  = T[jcv,icv-1]
                 Tcv_east  = 2*Tright - T[jcv,icv] # extrapolating with T @ west boundary = Tr
                 Tcv_south = T[jcv-1,icv]
                 Tcv_north = T[jcv+1,icv]
             else:
                 Tcv_west  = T[jcv,icv-1]
                 Tcv_east  = T[jcv,icv+1]
+                #pdb.set_trace()
                 Tcv_south = T[jcv-1,icv]
                 Tcv_north = T[jcv+1,icv]
             
@@ -370,6 +398,7 @@ def solve_t(ncv_x,ncv_y,nno_x,nno_y,h,dt,ubc_south,ubc_north,vbc_west,vbc_east,u
             # update the temperature 
             Tt[jcv,icv] = T[jcv,icv] + dt * ( -F_c+F_d )
     T = Tt                
+    #pdb.set_trace() #debugging
     return 
 
 def correct_uv(ncv_x,ncv_y,nno_x,nno_y,h,dt,u,v,ut,vt,p):
@@ -416,6 +445,27 @@ def plot_uv(ncv_x,ncv_y,nno_x,nno_y,ubc_south,ubc_north,vbc_west,vbc_east,x,y,u,
     pl.quiver(X , Y , u_plot , v_plot )
     pl.xlabel('X')
     pl.ylabel('Y');
+    pl.title('U,V');
+    
+    return
+
+def plot_t(ncv_x,ncv_y,nno_x,nno_y,ubc_south,ubc_north,vbc_west,vbc_east,x,y,T):
+    Tmag_plot = np.zeros((nno_y,nno_x))
+    # compute temperature
+    for jcv in range(ncv_y):
+        for icv in range(ncv_x):  
+            Tmag_plot[jcv,icv] = T[jcv,icv]
+   
+    # plot vontours of velocity magnitude and velocity vectors
+    X, Y = np.meshgrid(x, y)
+    fig = pl.figure(figsize=(11, 7), dpi=100)
+    pl.contourf(X, Y, Tmag_plot, alpha=0.8, cmap=cm.jet, levels = 50)
+    pl.gca().set_aspect('equal')
+    pl.colorbar()
+    pl.contour(X, Y, Tmag_plot, cmap=cm.jet)
+    pl.xlabel('X')
+    pl.ylabel('Y');
+    pl.title('T');
     
     return
 
@@ -512,7 +562,7 @@ def solve(ncv,ubc_south,ubc_north,vbc_west,vbc_east,solver,plot,mu,Tref,Tleft,Tr
     
         # solve for temperature 
         # solve_t(paramters )
-        solve_t(ncv_x,ncv_y,nno_x,nno_y,h,dt,ubc_south,ubc_north,vbc_west,vbc_east,u,v,ut,vt,k,rhoref,Cp,T,Tleft,Tright)
+        solve_t(ncv_x,ncv_y,nno_x,nno_y,h,dt,ubc_south,ubc_north,vbc_west,vbc_east,u,v,ut,vt,k,rhoref,Cp,T,Tleft,Tright,Tref)
         
         #compute the pressure field
         solve_p(ncv_x,ncv_y,nno_x,nno_y,h,dt,p,a_east,a_west,a_north,a_south,a_p,b,ut,vt,"ilu")
@@ -523,6 +573,8 @@ def solve(ncv,ubc_south,ubc_north,vbc_west,vbc_east,solver,plot,mu,Tref,Tleft,Tr
     if plot:
         # plot results reporting velocity on all nodes (average)
         plot_uv(ncv_x,ncv_y,nno_x,nno_y,ubc_south,ubc_north,vbc_west,vbc_east,x,y,u,v)
+        # plot results reporting temperature on all nodes (average) this function needs to be written
+        plot_t(ncv_x,ncv_y,nno_x,nno_y,ubc_south,ubc_north,vbc_west,vbc_east,x,y,T)
     #compute and write skin friction
     tau_east = compute_tau(ncv_x,ncv_y,nno_x,nno_y,h,ubc_south,ubc_north,vbc_west,vbc_east,u,v,mu)
     
