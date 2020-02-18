@@ -7,10 +7,10 @@ from scipy.interpolate import make_interp_spline, BSpline
 import pdb
  
 def main():
-    Ra        = 10^5      # set the Rayleigh number, viscosity will be a free parameter to match it
+    Ra        = 10^6      # set the Rayleigh number, viscosity will be a free parameter to match it
     Tref      = 273       # reference Temperature (K)
     Tleft     = 109       # left (hot) dirichlet boundary condition on temperature
-    Tright    = 436       # right (cold) dirichlet boundary condition on temperature
+    Tright    = 470       # right (cold) dirichlet boundary condition on temperature
     beta      = 0.00369   # thermal expansion coefficient (1/K)  0.00369 for air at 0 deg C, 1 Bar 
     gmag      = 9.81      # gravitational acceleration magnitude
     gx        = 0*gmag    # gravitational acceleration in x direction
@@ -18,6 +18,8 @@ def main():
     Cp        = 1004.703  # specific heat capacity (J/kg/K), 1000 for air at stp
     k         = 0.0246    # thermal conductivity (W/m/K), 0.026 for air
     rhoref    = 1.225     # reference density (kg/m^3), 1.225 for air at stp
+    
+    # this is a flag for constant temperature (lid driven)
     if Tleft == Tright:   
         mu = 0.1
         ubc_north = 1.0  # velocity of north wall
@@ -25,11 +27,11 @@ def main():
         mu = gmag*beta*k/Cp/rhoref*abs((Tleft-Tright))/Ra     # diffusion coefficient, really nu [m^2/s], assumes x = 1 
         ubc_north = 0.0  # velocity of north wall
     
-    deltat    = 0.01    # time  step (stability limit checked later)
-    timesteps = 60      # number of timesteps
+    deltat    = 5E-5    # time  step (stability limit checked later)
+    timesteps = 6000  # number of timesteps
     solver    = "ilu"
     plot      = 1
-    ncv       = 50
+    ncv       = 16   # 50
     ubc_south = 0.0  # velocity of south wall 
     vbc_west  = 0.0  # velocity of west  wall
     vbc_east  = 0.0  # velocity of east  wall
@@ -404,9 +406,8 @@ def solve_t(ncv_x,ncv_y,nno_x,nno_y,h,dt,ubc_south,ubc_north,vbc_west,vbc_east,u
             F_d = (k/rhoref/Cp/(h**2))*(Tcv_east+Tcv_west+Tcv_north+Tcv_south-4.0*T[jcv,ino])
             
             # update the temperature 
-            new_temp =  T[jcv,icv] + dt * ( -F_c+F_d )
-            #if new_temp > Tleft:
-                #raise AttributeError('temperature error')
+            new_temp =  T[jcv,icv] + dt * ( -F_c+F_d ) 
+            
             Tt[jcv,icv] = new_temp     
     T = Tt
     return  
@@ -452,12 +453,12 @@ def plot_uv(ncv_x,ncv_y,nno_x,nno_y,ubc_south,ubc_north,vbc_west,vbc_east,x,y,u,
     pl.gca().set_aspect('equal')
     pl.colorbar()
     pl.contour(X, Y, vmag_plot, cmap=cm.jet)
-    pl.quiver(X , Y , u_plot , v_plot )
+    #pl.quiver(X , Y , u_plot , v_plot )
     pl.xlabel('X')
     pl.ylabel('Y');
     pl.title('U,V');
     
-    return
+    return 
 
 def plot_t(ncv_x,ncv_y,T): 
             
@@ -543,6 +544,7 @@ def solve(ncv,ubc_south,ubc_north,vbc_west,vbc_east,solver,plot,mu,Tref,Tleft,Tr
     dt = deltat              # defaults to 0.02
     dt = min(dt,.2*h*h/mu)   # viscous limit
     
+    # if lid driven check peclet number 
     if vmax != 0:
         dt = min(dt,2.0*mu/vmax) # Peclet number limit
     else: 
@@ -596,6 +598,7 @@ def solve(ncv,ubc_south,ubc_north,vbc_west,vbc_east,solver,plot,mu,Tref,Tleft,Tr
         
         # advance time
         time = time+dt
+        print('Timestep ' + str(istep + 1) + ' of ' + str(timesteps))  
     if plot:
         # plot results reporting velocity on all nodes (average)
         plot_uv(ncv_x,ncv_y,nno_x,nno_y,ubc_south,ubc_north,vbc_west,vbc_east,x,y,u,v)
