@@ -1,4 +1,5 @@
 #set things up
+import os
 import numpy  as np                       
 import time, sys  
 import matplotlib.pyplot as pl
@@ -7,10 +8,10 @@ from scipy.interpolate import make_interp_spline, BSpline
 import pdb
  
 def main():
-    Ra        = 10^6      # set the Rayleigh number, viscosity will be a free parameter to match it
+    Ra        = 10^4      # set the Rayleigh number, viscosity will be a free parameter to match it
     Tref      = 273       # reference Temperature (K)
-    Tleft     = 109       # left (hot) dirichlet boundary condition on temperature
-    Tright    = 470       # right (cold) dirichlet boundary condition on temperature
+    Tleft     = 470       # left (hot) dirichlet boundary condition on temperature
+    Tright    = 109       # right (cold) dirichlet boundary condition on temperature
     beta      = 0.00369   # thermal expansion coefficient (1/K)  0.00369 for air at 0 deg C, 1 Bar 
     gmag      = 9.81      # gravitational acceleration magnitude
     gx        = 0*gmag    # gravitational acceleration in x direction
@@ -27,8 +28,8 @@ def main():
         mu = gmag*beta*k/Cp/rhoref*abs((Tleft-Tright))/Ra     # diffusion coefficient, really nu [m^2/s], assumes x = 1 
         ubc_north = 0.0  # velocity of north wall
     
-    deltat    = 5E-5    # time  step (stability limit checked later)
-    timesteps = 6000  # number of timesteps
+    deltat    = 0.0001    # time  step (stability limit checked later)
+    timesteps = 30000  # number of timesteps
     solver    = "ilu"
     plot      = 1
     ncv       = 16   # 50
@@ -39,6 +40,9 @@ def main():
     solve(ncv,ubc_south,ubc_north,vbc_west,vbc_east,solver,plot,mu,Tref,Tleft,Tright,beta,gx,gy,Cp,k,rhoref,deltat,timesteps)
     
     return
+
+def clear():
+    os.system( 'clear' )
 
 # solve a linear system using gauss-seidel
 def solve_gs(ncv_x,ncv_y,dx,dy,phi,a_east,a_west,a_north,a_south,a_p,b,n_iter,tolerance):
@@ -265,14 +269,13 @@ def solve_uv(ncv_x,ncv_y,nno_x,nno_y,h,dt,ubc_south,ubc_north,vbc_west,vbc_east,
     
             # update the temporary velocity
             vt[jno,icv] = v[jno,icv] + dt * ( -F_c+F_d+F_t )    
- 
-        
+
     return
  
  
 def solve_t(ncv_x,ncv_y,nno_x,nno_y,h,dt,ubc_south,ubc_north,vbc_west,vbc_east,u,v,ut,vt,k,rhoref,Cp,T,Tt,Tleft,Tright,Tref):
     
-    # update the temporary x-velocity field (only internal u-cells)      
+    # update the temporary temperature field
     for jcv in range(ncv_y): 
         for ino in range(ncv_x):
             icv = ino
@@ -341,7 +344,6 @@ def solve_t(ncv_x,ncv_y,nno_x,nno_y,h,dt,ubc_south,ubc_north,vbc_west,vbc_east,u
                 Tf_west  =  0.5 * (T[jcv,icv]+T[jcv,icv-1])   
                 Tf_east  =  0.5 * (T[jcv,icv]+T[jcv,icv+1])    
                  
-              
             # Convective Part of H        
             F_c = (uf_east*Tf_east - uf_west*Tf_west + vf_north*Tf_north - vf_south*Tf_south)/h
                 
@@ -404,12 +406,14 @@ def solve_t(ncv_x,ncv_y,nno_x,nno_y,h,dt,ubc_south,ubc_north,vbc_west,vbc_east,u
                 
             # Diffusive part of H - second order central difference       
             F_d = (k/rhoref/Cp/(h**2))*(Tcv_east+Tcv_west+Tcv_north+Tcv_south-4.0*T[jcv,ino])
-            
+             
             # update the temperature 
-            new_temp =  T[jcv,icv] + dt * ( -F_c+F_d ) 
-            
-            Tt[jcv,icv] = new_temp     
-    T = Tt
+            # some error checking here revealed that the temporary temperature was overwriting the temperature before the completion of a full time step
+            # pdb.set_trace()
+            Tt[jcv,icv] =  T[jcv,icv] + dt * ( -F_c+F_d ) 
+    
+    # we have now iterated over all x and y and can update the temperature field
+
     return  
 
 def correct_uv(ncv_x,ncv_y,nno_x,nno_y,h,dt,u,v,ut,vt,p):
@@ -420,6 +424,13 @@ def correct_uv(ncv_x,ncv_y,nno_x,nno_y,h,dt,u,v,ut,vt,p):
     for jno in range (1,nno_y-1): 
         for icv in range(ncv_x):
             v[jno,icv] = vt[jno,icv] - (dt/h)*(p[jno,icv]-p[jno-1,icv])
+    return
+
+def correct_t(ncv_x,ncv_y,nno_x,nno_y,h,dt,T,Tt):
+    # correct (and update) the temperature
+    for jcv in range(ncv_y): 
+        for icv in range(ncv_x):
+            T[jcv,icv] = Tt[jcv,icv]
     return
 
 def plot_uv(ncv_x,ncv_y,nno_x,nno_y,ubc_south,ubc_north,vbc_west,vbc_east,x,y,u,v):
@@ -533,14 +544,14 @@ def solve(ncv,ubc_south,ubc_north,vbc_west,vbc_east,solver,plot,mu,Tref,Tleft,Tr
     v  = np.zeros((nno_y,ncv_x))      # v velocity field
     p  = np.zeros((ncv_y,ncv_x))      # pressure   
     T  = np.ones((ncv_y,ncv_x))*Tref  # temperature
+    Tt = np.ones((ncv_y,ncv_x))*Tref  # temporary temperature
     ut = np.zeros((ncv_y,nno_x))      # temporary u velocity field
     vt = np.zeros((nno_y,ncv_x))      # temporary v velocity field
-       
-    
+     
     # time step and grid size
     h=1.0/ncv_x
     vmax = max(abs(ubc_north),abs(ubc_south),abs(vbc_west),abs(vbc_east)) #If nt walls moving, vmax = 0
-    # check stabbility limit
+    # check stability limit
     dt = deltat              # defaults to 0.02
     dt = min(dt,.2*h*h/mu)   # viscous limit
     
@@ -550,8 +561,8 @@ def solve(ncv,ubc_south,ubc_north,vbc_west,vbc_east,solver,plot,mu,Tref,Tleft,Tr
     else: 
         for i in range(ncv_y):
             T[i,:] = np.linspace(Tleft,Tright,ncv_x) 
-    Tt = T 
-    
+            Tt[i,:] = np.linspace(Tleft,Tright,ncv_x) 
+
     # grid points (nodes)
     x = np.linspace(0.0,1.0,nno_x)
     y = np.linspace(0.0,1.0,nno_y)
@@ -583,12 +594,23 @@ def solve(ncv,ubc_south,ubc_north,vbc_west,vbc_east,solver,plot,mu,Tref,Tleft,Tr
  
     # time loop
     time = 0.0
+    tconvvec = []
+    timevec  = []
     for istep in range(timesteps):
         #update the temporary velocity field
         solve_uv(ncv_x,ncv_y,nno_x,nno_y,h,dt,ubc_south,ubc_north,vbc_west,vbc_east,u,v,ut,vt,mu,p,beta,Tref,gx,gy,T)
     
         # solve for temperature 
         solve_t(ncv_x,ncv_y,nno_x,nno_y,h,dt,ubc_south,ubc_north,vbc_west,vbc_east,u,v,ut,vt,k,rhoref,Cp,T,Tt,Tleft,Tright,Tref)
+        tconv = np.linalg.norm((Tt-T)) # we store a measure of the difference between the temp field at the current and previous time step
+        #pdb.set_trace()
+        print(tconv)
+        tconvvec.append(tconv)
+        timevec.append(time+dt)
+
+        # update the temperature field
+        # this operation is trivial, but I do it in a separate function to avoid issues related to temp overwriting itself
+        correct_t(ncv_x,ncv_y,nno_x,nno_y,h,dt,T,Tt)
         
         #compute the pressure field
         solve_p(ncv_x,ncv_y,nno_x,nno_y,h,dt,p,a_east,a_west,a_north,a_south,a_p,b,ut,vt,"ilu")
@@ -598,6 +620,7 @@ def solve(ncv,ubc_south,ubc_north,vbc_west,vbc_east,solver,plot,mu,Tref,Tleft,Tr
         
         # advance time
         time = time+dt
+        clear()
         print('Timestep ' + str(istep + 1) + ' of ' + str(timesteps))  
     if plot:
         # plot results reporting velocity on all nodes (average)
@@ -608,7 +631,15 @@ def solve(ncv,ubc_south,ubc_north,vbc_west,vbc_east,solver,plot,mu,Tref,Tleft,Tr
         
         # plot pressure
         plot_p(ncv_x,ncv_y,p) 
-        
+
+        # plot some measure to track convergence, in this case l2 norm of the difference between the current temp and temp at previous time step
+        fig = pl.figure(figsize=(11, 7), dpi=100)
+       # pl.contourf(X, Y, vmag_plot, alpha=0.8, cmap=cm.jet, levels = 20)
+        pl.plot(timevec,tconvvec)
+        pl.xlabel('time')
+        pl.ylabel('Convergence');
+        pl.title('l2 T norm');
+            
     #compute and write skin friction
     tau_east = compute_tau(ncv_x,ncv_y,nno_x,nno_y,h,ubc_south,ubc_north,vbc_west,vbc_east,u,v,mu)
     
